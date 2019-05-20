@@ -1,0 +1,123 @@
+---
+title: "Stats140SL Final Project"
+author: "Kathy Fu (UID:004612157)"
+date: "3/9/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(lubridate)
+load("expedia.RData")
+dest <- read_delim("/Users/kathyfu/Documents/4th Year Academics/Stats140SL/dest.txt", 
+    "\t", escape_double = FALSE, trim_ws = TRUE)
+dest <- dest[,1:5]
+
+#Filter to only keep Expedia users booking from USA
+expedia_usa <- expedia[expedia$user_location_country == "UNITED STATES OF AMERICA",]
+
+#Create a vector of user_ids for people who have booked at least once, then pull only the rows of those particular users
+users_with_booking <- expedia_usa %>% filter(is_booking == 1) %>% select(user_id) %>% unique()
+users_with_booking <- users_with_booking$user_id
+usa_users_booked <- expedia_usa[which(expedia_usa$user_id %in% users_with_booking),]
+
+#Filter to only keep users booking hotels located in USA
+usa_users_domestic <- usa_users_booked %>% filter(hotel_country == "UNITED STATES OF AMERICA")
+
+#Display data frame grouped by user_id and srch_destination_id in arranged order
+new_usa_users_domestic <- usa_users_domestic %>% group_by(user_id) %>% group_by(srch_destination_id) %>% arrange(user_id, srch_destination_id, date_time)
+
+#Create new variables for number of hotels the user looked into and the time spent from the first time they thought about booking to the date they actually booked the hotel
+data <- new_usa_users_domestic %>% group_by(user_id,srch_destination_id) %>% mutate(num_hotels=n(),time_spent=difftime(last(date_time), first(date_time),unit="days")) %>% filter(row_number() == n())
+
+#Check for NAs, and remove those observations
+apply(data, 2, function(x) sum(is.na(x)))
+data <- na.omit(data)
+
+#Create a new variable for time difference between the date they booked and the date of their hotel booking
+successful <- data %>% filter(is_booking == 1) %>% mutate(time_advance=difftime(as.POSIXct(srch_ci), date_time,units="days"))
+successful$time_advance <- as.numeric(successful$time_advance)
+successful[successful$time_advance < 0,"time_advance"] <- 0
+
+#Merge data to include destination_id information
+df <- merge(x=successful,y=dest,by="srch_destination_id",all.x=TRUE)
+
+##Kathy's RCode:
+
+#Heavy Researchers, Nonresearchers, Early birds, Last minute groupings
+heavyresearchers <- successful[successful$num_searches>8,]
+nonresearchers <- successful[successful$num_searches==1,]
+earlybirds <- successful[successful$time_advance > 14,]
+lastminute <- successful[successful$time_advance==0,]
+
+#Looking at is_mobile and is_package variables for each consumer group
+researchers[,"is_mobile"] %>% table(dnn=c("Heavy researchers non-mobile versus mobile bookings")) %>% prop.table 
+nonresearchers[,"is_mobile"] %>% table(dnn=c("Non-researchers non-mobile versus mobile bookings")) %>% prop.table
+
+earlybirds[,"is_mobile"] %>% table(dnn=c("Early bookers non-mobile versus mobile bookings")) %>% prop.table
+lastminute[,"is_mobile"] %>% table(dnn=c("Same-day bookers non-mobile versus mobile bookings")) %>% prop.table
+
+earlybirds[,"is_package"] %>% table(dnn=c("Early bookers non-packaged versus packaged bookings")) %>% prop.table
+lastminute[,"is_package"] %>% table(dnn=c("Same-day bookers non-packaged versus packaged bookings")) %>% prop.table
+
+researchers[,"is_package"] %>% table(dnn=c("Heavy researchers non-packaged versus packaged bookings")) %>% prop.table 
+nonresearchers[,"is_package"] %>% table(dnn=c("Non-researchers non-packaged versus packaged bookings")) %>% prop.table
+
+
+#Histograms for time_spent and time_advance
+ggplot(successful[successful$time_spent<10,], aes(x=as.numeric(time_spent), y=..count../sum(count))) +
+  geom_histogram(fill="#CCCCFF", col="black", binwidth=.5) +
+  theme_minimal() +
+  labs(x="Days between search date and booking date", y="Proportion") +
+  ggtitle("Histogram for time_spent variable")
+
+ggplot(successful, aes(x=as.numeric(time_advance), y=..count../sum(count))) +
+  geom_histogram(fill="#CCCCFF", col="black", binwidth=4) +
+  theme_minimal() +
+  labs(x="Days between booking date and check-in date", y="Proportion") +
+  ggtitle("Histogram for time_advance variable")
+
+#Conclusion Slide
+#Shows that people actually dont book that far in advance even for far travels
+InAdv <- successful %>% group_by(distance_band) %>% summarise(mean(time_advance))
+InAdv$distance_band[1] <- "Close"
+InAdv$distance_band[2] <- "Far"
+InAdv$distance_band[3] <- "Medium"
+InAdv$distance_band[4] <- "Very Close"
+InAdv$distance_band[5] <- "Very Far"
+target <- c("Very Close", "Close", "Medium", "Far", "Very Far")
+InAdv <- InAdv[match(target, InAdv$distance_band),]
+
+InAdv1 <- successful %>% group_by(distance_band) %>% summarise(median(time_advance))
+InAdv1$distance_band[1] <- "Close"
+InAdv1$distance_band[2] <- "Far"
+InAdv1$distance_band[3] <- "Medium"
+InAdv1$distance_band[4] <- "Very Close"
+InAdv1$distance_band[5] <- "Very Far"
+target <- c("Very Close", "Close", "Medium", "Far", "Very Far")
+InAdv1 <- InAdv1[match(target, InAdv1$distance_band),]
+```
+
+
+
+#Heat Map
+```{r}
+successful$user_location_region %>% table %>% sort(descreasing=F)
+
+#remove users from ? and AOL
+successful[(successful$user_location_region != "AOL") & (successful$user_location_region != "?"),"user_location_region"] %>% table %>% sort(descreasing=F) %>% length
+
+library(tidyverse)
+library(stringr)
+library(viridis)
+library(ggmap)
+successful %>% glimpse()
+ggplot() + geom_point(data = successful, aes(x = user_location_longitude, y = user_location_latitude), alpha = 0.05)
+ggplot() + stat_density2d(data = successful, aes(x = user_location_longitude, y = user_location_latitude, fill = ..density..), geom = 'tile', contour = F)
+map_usa <- get_map('USA', zoom = "auto", maptype = "hybrid")
+```
