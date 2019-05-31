@@ -1,6 +1,6 @@
 ---
 title: "Stats140SL Final Project"
-author: "Kathy Fu (UID:004612157)"
+author: "Kathy Fu"
 date: "3/9/2019"
 output: html_document
 ---
