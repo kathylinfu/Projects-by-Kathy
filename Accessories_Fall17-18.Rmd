@@ -1,0 +1,399 @@
+---
+title: 'Fall 2017-2018: Accessories Usage Report'
+author: "Kathy Fu"
+date: "5/23/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=F, message=F}
+library(readr)
+library(lubridate)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(knitr)
+library(Hmisc)
+```
+
+```{r message = F, warning = F, echo=F}
+f17 <- read_csv("/Users/kathyfu/Documents/CLICC/Reports/Accessories Lending/17F Accessories.csv")
+w18 <- read_csv("/Users/kathyfu/Documents/CLICC/Reports/Accessories Lending/18W Accessories.csv")
+s18 <- read_csv("/Users/kathyfu/Documents/CLICC/Reports/Accessories Lending/18S Accessories.csv")
+i18 <- read_csv("/Users/kathyfu/Documents/CLICC/Reports/Accessories Lending/18I Accessories.csv")
+f18 <- read_csv("/Users/kathyfu/Documents/CLICC/Reports/Accessories Lending/18F Accessories.csv")
+
+#change each quarter into POSIX type
+f17$CHARGE_DATE <- strptime(f17$CHARGE_DATE, format="%m/%d/%Y %I:%M %p")
+f17$DISCHARGE_DATE <- strptime(f17$DISCHARGE_DATE, format="%m/%d/%Y %I:%M %p")
+w18$CHARGE_DATE <- strptime(w18$CHARGE_DATE, format="%m/%d/%Y %I:%M %p")
+w18$DISCHARGE_DATE <- strptime(w18$DISCHARGE_DATE, format="%m/%d/%Y %I:%M %p")
+s18$CHARGE_DATE <- strptime(s18$CHARGE_DATE, format="%m/%d/%Y %I:%M %p")
+s18$DISCHARGE_DATE <- strptime(s18$DISCHARGE_DATE, format="%m/%d/%Y %I:%M %p")
+i18$CHARGE_DATE <- strptime(i18$CHARGE_DATE, format="%m/%d/%Y %I:%M %p")
+i18$DISCHARGE_DATE <- strptime(i18$DISCHARGE_DATE, format="%m/%d/%Y %I:%M %p")
+f18$CHARGE_DATE <- strptime(f18$CHARGE_DATE, format="%m/%d/%Y %I:%M %p")
+f18$DISCHARGE_DATE <- strptime(f18$DISCHARGE_DATE, format="%m/%d/%Y %I:%M %p")
+
+#save only rows that fall into the appropriate quarters
+f17 <- f17[f17$CHARGE_DATE > '2017-09-25 00:00:01' & f17$CHARGE_DATE < '2017-12-15 23:59:59',]
+w18 <- w18[w18$CHARGE_DATE > '2018-01-03 00:00:01' & w18$CHARGE_DATE < '2018-03-23 23:59:59',]
+s18 <- s18[s18$CHARGE_DATE > '2018-03-28 00:00:01' & s18$CHARGE_DATE < '2018-06-15 23:59:59',]
+f18 <- f18[f18$CHARGE_DATE > '2018-09-24 00:00:01' & f18$CHARGE_DATE < '2018-12-14 23:59:59',]
+
+#Merge files and add column for Quarter
+all <- rbind(f17, w18, s18, i18, f18)
+all$Quarter <- rep(NA, nrow(all))
+all[1:nrow(f17),"Quarter"] <- "Fall 2017"
+all[(nrow(f17)+1):(nrow(f17)+nrow(w18)),"Quarter"] <- "Winter 2018"
+all[(nrow(f17)+nrow(w18)+1):(nrow(f17)+nrow(w18)+nrow(s18)),"Quarter"] <- "Spring 2018"
+all[(nrow(f17)+nrow(w18)+nrow(s18)+1):(nrow(f17)+nrow(w18)+nrow(s18)+nrow(i18)),"Quarter"] <- "Summer 2018"
+all[(nrow(f17)+nrow(w18)+nrow(s18)+nrow(i18)+1):nrow(all),"Quarter"] <- "Fall 2018"
+
+#Create new variable for ITEM_TYPE
+all$ITEM_ENUM <- tolower(all$ITEM_ENUM)
+all$ITEM_TYPE <- str_extract_all(all$ITEM_ENUM, "-(\\w+)-") %>% unlist
+all$ITEM_TYPE <- str_replace_all(all$ITEM_TYPE, "-", "")
+all[all$ITEM_TYPE=="m","ITEM_TYPE"] <- "mouse"
+all[all$ITEM_TYPE=="hdst", "ITEM_TYPE"] <- "headset"
+all[all$ITEM_TYPE=="hyprjce","ITEM_TYPE"] <- "hyperjuice"
+all[all$ITEM_TYPE=="hdmi","ITEM_TYPE"] <- "HDMI"
+all[all$ITEM_TYPE=="vga","ITEM_TYPE"] <- "VGA"
+all[all$ITEM_TYPE=="vgac","ITEM_TYPE"] <- "VGA cable"
+all[all$ITEM_TYPE=="sup","ITEM_TYPE"] <- "superdrive"
+all[all$ITEM_TYPE=="graph","ITEM_TYPE"] <- "graphing calc"
+all[all$ITEM_TYPE=="calcti" | all$ITEM_TYPE=="calc","ITEM_TYPE"] <- "non-graphing calc"
+all[all$ITEM_TYPE=="chg","ITEM_TYPE"] <- "new macbook charger"
+all[all$ITEM_TYPE=="chrg","ITEM_TYPE"] <- "old macbook charger"
+all[all$ITEM_TYPE=="pen","ITEM_TYPE"] <- "livescribe pen"
+all[str_detect(all$ITEM_ENUM, "new"), "ITEM_TYPE"] <- "new macbook charger"
+all[str_detect(all$ITEM_ENUM, "old"), "ITEM_TYPE"] <- "old macbook charger"
+all[str_detect(all$ITEM_ENUM, "usb"), "ITEM_TYPE"] <- "USBC macbook charger"
+all$ITEM_TYPE <- capitalize(all$ITEM_TYPE)
+all <- all[all$ITEM_TYPE != "Fsc",] #Remove FSC Portable Chargers
+
+#Remove columns PATRON_GROUP_DISPLAY_1 and PATRON_STAT_CODE
+all <- all[,-c(3:4)]
+
+#Create new variable for Week number
+all$`Week in Quarter` <- rep(NA, nrow(all))
+start_dates <- c(ymd_hms('2017-10-01 00:00:00', tz="US/Pacific"), 
+                 ymd_hms('2018-01-07 00:00:00', tz="US/Pacific"),
+                 ymd_hms('2018-04-01 00:00:00', tz="US/Pacific"),
+                 ymd_hms('2018-09-30 00:00:00', tz="US/Pacific"))
+
+#Nested for loop to get Week in Quarter
+for(i in 1:4){
+  weeks <- start_dates[i] + weeks(0:11)
+  for(i in 1:11){
+    if(i == 11){
+     all[all$CHARGE_DATE > weeks[i] & all$CHARGE_DATE < weeks[i] + days(5),"Week in Quarter"] <- i
+    }
+    all[all$CHARGE_DATE > weeks[i] & all$CHARGE_DATE < weeks[i+1],"Week in Quarter"] <- i
+  }
+}
+
+all[all$CHARGE_DATE > '2017-09-25 00:00:00' & all$CHARGE_DATE < '2017-09-30 23:59:59',"Week in Quarter"] <- 0
+all[all$CHARGE_DATE > '2018-09-24 00:00:00' & all$CHARGE_DATE < '2018-09-29 23:59:59',"Week in Quarter"] <- 0
+
+all$`Week in Quarter` <- paste(all$`Week in Quarter`, "Week")
+all$`Week in Quarter` <- factor(all$`Week in Quarter`,
+                         levels=c("0 Week","1 Week","2 Week","3 Week","4 Week","5 Week",
+                                  "6 Week","7 Week","8 Week","9 Week","10 Week","11 Week"))
+all$Quarter <- factor(all$Quarter,
+               levels=c("Fall 2017", "Winter 2018", "Spring 2018", "Summer 2018", "Fall 2018"))
+                
+
+#Fixing PATRON_GROUP_DISPLAY values
+all <- all[all$PATRON_GROUP_DISPLAY != "CLICC Maintenance",]
+all[all$PATRON_GROUP_DISPLAY == "UCLA Graduate - DD" | 
+    all$PATRON_GROUP_DISPLAY == "UCLA Law Graduate" |
+    all$PATRON_GROUP_DISPLAY == "Visiting Grad Researcher" |
+    all$PATRON_GROUP_DISPLAY == "UCLA Management PhD" |
+    all$PATRON_GROUP_DISPLAY == "Other UC Graduate" ,
+    "PATRON_GROUP_DISPLAY"] <- "UCLA Graduate"
+all[all$PATRON_GROUP_DISPLAY == "UCLA Undergraduate - DD" |
+    all$PATRON_GROUP_DISPLAY == "UCLA Music Undergraduate",
+    "PATRON_GROUP_DISPLAY"] <- "UCLA Undergraduate"
+all[all$PATRON_GROUP_DISPLAY == "UCLA Academic - DD" |
+    all$PATRON_GROUP_DISPLAY == "UCLA Academic" |
+    all$PATRON_GROUP_DISPLAY == "UCLA Academic - NoLimit" |
+    all$PATRON_GROUP_DISPLAY == "UCLA Staff - DD",
+    "PATRON_GROUP_DISPLAY"] <- "UCLA Staff"
+```
+
+##1.) How many of each item are being lent per quarter and week?
+###a) Overall by Week and Item Breakdown
+```{r echo=F}
+#TABLE REPRESENTATION
+all$ITEM_TYPE %>% table %>% sort(decreasing = T) %>% kable(col.names = c("Item Type", "Frequency"), caption="Fall 2017-2018 Item Checkouts")
+table(all$ITEM_TYPE, all$`Week in Quarter`) %>% kable(caption="Fall 2017-2018 Item Checkouts by Week")
+
+#GRAPHICAL REPRESENTATION
+ggplot(all, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))), y=..count.., fill=Quarter)) + geom_bar() + theme(axis.text.x = element_text(angle = 45, hjust = 1)) + xlab("Item Type") + ggtitle("Item Usage per Quarter")
+
+#Excluding summer 2018
+main_quarters <- all[all$Quarter != "Summer 2018",]
+ggplot(main_quarters, aes(x=`Week in Quarter`, y=..count.., fill=Quarter)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(size=8)) +
+  xlab("Week in Quarter") + 
+  ggtitle("Small Accessories Item Usage Activity")
+
+data <- as.data.frame(table(main_quarters$`Week in Quarter`, factor(main_quarters$Quarter)))
+names(data) <- c("Week", "Quarter", "Frequency")
+ggplot(data, aes(x=Week,y=Frequency, group=Quarter,col=Quarter)) +
+  geom_line(size=1) +
+  theme(axis.text.x = element_text(size=8)) +
+  ggtitle("Time Analysis of Item Checkouts per Quarter")
+```
+
+###b) Fall 2017 by Week
+```{r echo=F}
+fall2017 <- all[all$Quarter == "Fall 2017",]
+
+#TABLE REPRESENTATION
+table(fall2017$ITEM_TYPE) %>% sort(decreasing = T) %>% kable(col.names = c("Item Type", "Frequency"), caption="Fall 2017 Item Checkouts")
+table(fall2017$ITEM_TYPE, fall2017$`Week in Quarter`) %>% kable(caption="Fall 2017 Item Checkouts by Week")
+
+
+#GRAPHICAL REPRESENTATION
+ggplot(fall2017, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))),
+                     y=..count.., fill=`Week in Quarter`)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 55, hjust = 1)) + 
+  xlab("Item Type") + 
+  ggtitle("Fall 2017 Item Usage per Week")
+
+#separate into two graphics for better visibility
+firsthalf <- fall2017[as.numeric(fall2017$`Week in Quarter`) <= 6,]
+secondhalf <- fall2017[as.numeric(fall2017$`Week in Quarter`) > 6,]
+
+#Fall 2017 Weeks 0-5
+ggplot(firsthalf, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))),
+                     y=..count.., fill=`Week in Quarter`)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),legend.position = "none") + 
+  xlab("Item Type") + 
+  ggtitle("Fall 2017 Item Usage for Weeks 0-5") +
+  facet_wrap(~`Week in Quarter`, ncol=3)
+
+#Fall 2017 Weeks 6-11
+ggplot(secondhalf, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))),
+                     y=..count.., fill=`Week in Quarter`)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),legend.position = "none") + 
+  xlab("Item Type") + 
+  ggtitle("Fall 2017 Item Usage for Weeks 6-11") +
+  facet_wrap(~`Week in Quarter`, ncol=3)
+```
+
+
+###c) Winter 2018 by Week
+```{r echo=F}
+winter2018 <- all[all$Quarter == "Winter 2018",]
+
+#TABLE REPRESENTATION
+table(winter2018$ITEM_TYPE) %>% sort(decreasing = T) %>% kable(col.names = c("Item Type", "Frequency"), caption="Winter 2018 Item Checkouts")
+table(winter2018$ITEM_TYPE, winter2018$`Week in Quarter`) %>% kable(caption="Winter 2018 Item Checkouts by Week")
+
+#GRAPHICAL REPRESENTATION
+ggplot(winter2018, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))),
+                     y=..count.., fill=`Week in Quarter`)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) + 
+  xlab("Item Type") + 
+  ggtitle("Winter 2018 Item Usage per Week")
+
+#separate into two graphics for better visibility
+firsthalf <- winter2018[as.numeric(winter2018$`Week in Quarter`) <= 6,]
+secondhalf <- winter2018[as.numeric(winter2018$`Week in Quarter`) > 6,]
+
+#Winter 2018 Weeks 1-5
+ggplot(firsthalf, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))),
+                     y=..count.., fill=`Week in Quarter`)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.position = "none") + 
+  xlab("Item Type") + 
+  ggtitle("Winter 2018 Item Usage for Weeks 1-5") +
+  facet_wrap(~`Week in Quarter`, ncol=3)
+
+#Winter 2018 Weeks 6-11
+ggplot(secondhalf, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))),
+                     y=..count.., fill=`Week in Quarter`)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.position = "none") + 
+  xlab("Item Type") + 
+  ggtitle("Winter 2018 Item Usage for Weeks 6-11") +
+  facet_wrap(~`Week in Quarter`, ncol=3)
+```
+
+
+###d) Spring 2018 by Week
+```{r echo=F}
+spring2018 <- all[all$Quarter == "Spring 2018",]
+
+#TABLE REPRESENTATION
+table(spring2018$ITEM_TYPE) %>% sort(decreasing = T) %>% kable(col.names = c("Item Type", "Frequency"), caption="Spring 2018 Item Checkouts")
+table(spring2018$ITEM_TYPE, spring2018$`Week in Quarter`) %>% kable(caption="Spring 2018 Item Checkouts by Week")
+
+#GRAPHICAL REPRESENTATION
+ggplot(spring2018, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))),
+                     y=..count.., fill=`Week in Quarter`)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  xlab("Item Type") + 
+  ggtitle("Spring 2018 Item Usage per Week")
+
+#separate into two graphics for better visibility
+firsthalf <- spring2018[as.numeric(spring2018$`Week in Quarter`) <= 6,]
+secondhalf <- spring2018[as.numeric(spring2018$`Week in Quarter`) > 6,]
+
+#Spring 2018 Weeks 1-5
+ggplot(firsthalf, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))),
+                     y=..count.., fill=`Week in Quarter`)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") + 
+  xlab("Item Type") + 
+  ggtitle("Spring 2018 Item Usage for Weeks 1-5") +
+  facet_wrap(~`Week in Quarter`, ncol=3)
+
+#Spring 2018 Weeks 6-11
+ggplot(secondhalf, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))),
+                     y=..count.., fill=`Week in Quarter`)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") + 
+  xlab("Item Type") + 
+  ggtitle("Spring 2018 Item Usage for Weeks 6-11") +
+  facet_wrap(~`Week in Quarter`, ncol=3)
+```
+
+
+###e) Summer 2018
+Note: Summer does not have item usage broken down by week because there are two summer sessions going on.
+```{r echo=F}
+summer2018 <- all[all$Quarter == "Summer 2018",]
+
+#TABLE REPRESENTATION
+table(summer2018$ITEM_TYPE) %>% sort(decreasing = T) %>% kable(col.names = c("Item Type", "Frequency"), caption="Summer 2018 Item Checkouts")
+
+#GRAPHICAL REPRESENTATION
+ggplot(summer2018, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))),
+                     y=..count..)) + 
+  geom_bar(fill=rainbow(15)) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  xlab("Item Type") + 
+  ggtitle("Summer 2018 Item Usage")
+```
+
+
+###f) Fall 2018 by Week
+```{r echo=F}
+fall2018 <- all[all$Quarter == "Fall 2018",]
+
+#TABLE REPRESENTATION
+table(fall2018$ITEM_TYPE) %>% sort(decreasing = T) %>% kable(col.names = c("Item Type", "Frequency"), caption="Fall 2018 Item Checkouts")
+table(fall2018$ITEM_TYPE, fall2018$`Week in Quarter`) %>% kable(caption="Fall 2018 Item Checkouts by Week")
+
+#GRAPHICAL REPRESENTATION
+ggplot(fall2018, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))),
+                     y=..count.., fill=`Week in Quarter`)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  xlab("Item Type") + 
+  ggtitle("Fall 2018 Item Usage per Week")
+
+#separate into two graphics for better visibility
+firsthalf <- fall2018[as.numeric(fall2018$`Week in Quarter`) <= 6,]
+secondhalf <- fall2018[as.numeric(fall2018$`Week in Quarter`) > 6,]
+
+#Fall 2018 Weeks 0-5
+ggplot(firsthalf, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))),
+                     y=..count.., fill=`Week in Quarter`)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 50, hjust = 1, size = 8), legend.position = "none") + 
+  xlab("Item Type") + 
+  ggtitle("Fall 2018 Item Usage for Weeks 0-5") +
+  facet_wrap(~`Week in Quarter`, ncol=3)
+
+#Fall 2018 Weeks 6-11
+ggplot(secondhalf, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))),
+                     y=..count.., fill=`Week in Quarter`)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 50, hjust = 1, size = 8), legend.position = "none") + 
+  xlab("Item Type") + 
+  ggtitle("Fall 2018 Item Usage for Weeks 6-11") +
+  facet_wrap(~`Week in Quarter`, ncol=3)
+```
+
+
+##2.) Who is borrowing items?
+###a) Patron Types
+```{r echo=F}
+table(all$ITEM_TYPE, all$PATRON_GROUP_DISPLAY) %>% kable(caption="Fall 2017-2018 Item Usage by Patron Type")
+
+ggplot(all, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))), y=..count.., fill=PATRON_GROUP_DISPLAY)) + geom_bar() + theme(axis.text.x = element_text(angle = 45, hjust = 1)) + xlab("Item Type") + ggtitle("Item Usage by Patron Type")
+```
+
+###b) Individual Patrons
+Note: The datasets for fall 2017 and winter 2018 have more than 50% null values for the patron ID, so they are excluded in the following table.
+```{r echo=F}
+data.frame("Total_Individual_Patrons" = c(length(unique(spring2018$INSTITUTION_ID)), 
+  length(unique(summer2018$INSTITUTION_ID)), 
+  length(unique(fall2018$INSTITUTION_ID))), 
+  row.names = c("Spring 2018","Summer 2018", "Fall 2018")) %>% 
+  kable(caption="Number of Individual Patrons per Quarter")
+```
+
+
+##3) When and where are people borrowing from?
+###a) Item Usage by Location
+```{r echo=F}
+table(all$CHARGE_PLACE) %>% sort(decreasing=T) %>% kable(caption= "Checkouts by Location")
+main_clicc <- c("CLICC Lab", "CLICC Powell", "CLICC YRL")
+ggplot(all[all$CHARGE_PLACE %in% main_clicc,], 
+       aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))), 
+           y=..count.., fill=CHARGE_PLACE)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 55, hjust = 1), legend.position = "none") + 
+  xlab("Item Type") + 
+  ggtitle("Item Usage by Main CLICC Locations") + 
+  facet_wrap(~ CHARGE_PLACE, ncol=3)
+
+all$CHARGE_PLACE <- factor(all$CHARGE_PLACE, 
+       levels = c("CLICC Lab", "CLICC Powell", "CLICC YRL", "CLICC Biomed", "CLICC SEL Boelter", "CLICC Arts", 
+                  "CLICC SEL Geology", "CLICC Music", "CLICC Classrooms"))
+table(all$ITEM_TYPE, all$CHARGE_PLACE) %>% kable(caption="Item Usage by Location")
+
+ggplot(all, aes(x=factor(ITEM_TYPE, levels=names(sort(table(ITEM_TYPE), decreasing=TRUE))), 
+           y=..count.., fill=CHARGE_PLACE)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  xlab("Item Type") + 
+  ggtitle("Item Usage by Location")
+```
+
+###b) Time Analysis of Item Usage by Location and Week
+```{r echo = F}
+data <- as.data.frame(table(main_quarters$`Week in Quarter`, factor(main_quarters$CHARGE_PLACE)))
+names(data) <- c("Week", "Location", "Frequency")
+ggplot(data, aes(x=Week,y=Frequency, group=Location,col=Location)) +
+  geom_line(size=1) +
+  theme(axis.text.x = element_text(size=7)) +
+  ggtitle("Time Analysis of Item Checkouts by Location")
+
+main_location_quarters <- main_quarters[main_quarters$CHARGE_PLACE %in% main_clicc,]
+data <- as.data.frame(table(main_location_quarters$`Week in Quarter`, factor(main_location_quarters$CHARGE_PLACE)))
+names(data) <- c("Week", "Location", "Frequency")
+ggplot(data, aes(x=Week,y=Frequency, group=Location,col=Location)) +
+  geom_line(size=1) +
+  theme(axis.text.x = element_text(size=7.5)) +
+  ggtitle("Time Analysis of Item Checkouts at Main CLICC Locations")
+```
+
+We see that there is a consistent dip in checkouts during Week 8. This is likely indicative of when people are less worried about midterms or finals. Shown by the two peaks, the busiest weeks for accessory item checkouts are Week 4 and Week 10.
